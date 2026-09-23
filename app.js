@@ -311,7 +311,7 @@
         let res;
         try{
           // 同一オリジンから直接取得。Service Workerのモデルキャッシュには依存しない。
-          res=await fetch(url,{cache:'no-store',signal:controller.signal});
+          res=await fetch(url+'?v=23',{cache:'reload',credentials:'same-origin',signal:controller.signal});
         }finally{ clearTimeout(timer); }
         if(!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
         const chunk=new Uint8Array(await res.arrayBuffer());
@@ -1002,5 +1002,5 @@
 
   // Initial setup
   updateRuleSummary();loadSettingsUI();syncPlayerModeUI();syncRuleEffects();updateSpecialLabel();syncManualConflicts();renderHand();renderWin();renderMelds();renderWaitHand();renderWaitResult();manualCalc();analyze();
-  if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js?v=19').catch(()=>{}));}
+  if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js?v=23',{updateViaCache:'none'}).catch(()=>{}));}
 })();
