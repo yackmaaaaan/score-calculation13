@@ -552,10 +552,15 @@
     const oldChecks={};
     ['riichi','doubleRiichi','ippatsu','rinshan','chankan','haitei','houtei','tenhou','chiihou'].forEach(id=>{oldChecks[id]=el(id).checked;el(id).checked=false});
     let best=null;
-    if(isKokushi()||isChiitoi()){
+    if(isKokushi()){
       const d={groups:[],pair:null}; const ys=yakuList(d); const ym=yakumanMultiplier(ys);
-      best={ys,ym,h:0,fu:ym?25:fuCalc(d)};
+      best={ys,ym,h:0,fu:25};
     }else{
+      if(isChiitoi()){
+        const cd={groups:[],pair:null}, ys=yakuList(cd), ym=yakumanMultiplier(ys);
+        const h=ys.filter(y=>y.type!=='yakuman').reduce((a,y)=>a+y.han,0)+doraCount();
+        best={ys,ym,h,fu:25};
+      }
       const ds=decompositions(hand,4);
       ds.forEach(d=>{
         const ys=yakuList(d), ym=yakumanMultiplier(ys);
@@ -742,8 +747,9 @@
   function allShapeTiles(s){return [...s.groups.flatMap(g=>g),...(s.pair||[])];}
   function hasTrip(s,t){return s.groups.some(g=>isTrip(g)&&g[0]===t)}
   function hasSeq(s,key){return s.groups.some(g=>isSeq(g)&&groupKey(g)===key)}
+  function isChiitoiShape(d){return isChiitoi() && (!d || ((!d.groups||d.groups.length===0) && !d.pair));}
   function yakuList(d){
-    const chiitoi=isChiitoi();
+    const chiitoi=isChiitoiShape(d);
     const s=shapeData(d);
     const all=(chiitoi && (!d || ((!d.groups||d.groups.length===0) && !d.pair))) ? sortedTiles(hand) : allShapeTiles(s);
     const gs=s.groups, seqs=gs.filter(isSeq), trips=gs.filter(isTrip), kans=melds.filter(m=>m.type.includes('kan'));
@@ -917,7 +923,7 @@
   function isPureChuuren(all,w){if(!w||all.length!==14||isHonor(w))return false;const ss=suit(w);if(all.some(t=>isHonor(t)||suit(t)!==ss))return false;const before=[...all];const wi=before.indexOf(w);if(wi<0)return false;before.splice(wi,1);const c=counts(before),base={1:3,2:1,3:1,4:1,5:1,6:1,7:1,8:1,9:3};return Object.keys(base).every(n=>(c[`${n}${ss}`]||0)===base[n]);}
 
   function fuCalc(d){
-    if(isChiitoi())return 25;
+    if(isChiitoiShape(d))return 25;
     const s=shapeData(d); if(!s.pair)return 0; let f=20;
     const wm=el('winMethod').value; if(wm==='ron'&&closed())f+=10;
     if(wm==='tsumo')f+=2;
@@ -961,7 +967,7 @@
 
   function renderShape(d){
     const box=el('selectedShape'); box.innerHTML=''; if(!d)return;
-    if(isChiitoi() || isKokushi()){
+    if(isChiitoiShape(d) || isKokushi()){
       const b=document.createElement('div'); b.className='shape-group'; b.innerHTML=sortedTiles(hand).map(tileImg).join(''); box.appendChild(b); return;
     }
     const s=shapeData(d);
@@ -978,11 +984,19 @@
     if(physical!==expected){st.className='status';st.textContent=`現在${physical}枚。手牌と副露を合わせて${expected}枚にしてね`;return}
     if(!win){st.className='status';st.textContent='和了牌を選択してね';return}
     if(tileCount(win)<1){st.className='status err';st.textContent='和了牌が手牌にありません';return}
-    if(isKokushi()||isChiitoi()){
+    if(isKokushi()){
       const d={groups:[],pair:null}; const ys=yakuList(d); const ym=yakumanMultiplier(ys); finish(d,ys,ym); return;
     }
     const need=4-melds.length;if(need<0){st.className='status err';st.textContent='副露数が多すぎます';return}
-    const ds=decompositions(hand,need);let best=null;
+    let best=null;
+    // 七対子形でも通常の4面子1雀頭に分解できる場合（例：二盃口）は両方を評価し、得点の高い形を採用する。
+    // 同一の分解内では七対子と二盃口を複合させない。
+    if(isChiitoi()){
+      const cd={groups:[],pair:null}, ys=yakuList(cd), ym=yakumanMultiplier(ys);
+      const h=ys.filter(y=>y.type!=='yakuman').reduce((a,y)=>a+y.han,0)+doraCount();
+      best={d:cd,ys,ym,h,fu:25};
+    }
+    const ds=decompositions(hand,need);
     ds.forEach(d=>{
       const ys=yakuList(d), ym=yakumanMultiplier(ys);
       const h=ys.filter(y=>y.type!=='yakuman').reduce((a,y)=>a+y.han,0)+doraCount();
