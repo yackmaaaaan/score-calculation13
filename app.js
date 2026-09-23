@@ -311,7 +311,7 @@
         let res;
         try{
           // 同一オリジンから直接取得。Service Workerのモデルキャッシュには依存しない。
-          res=await fetch(url+'?v=23',{cache:'reload',credentials:'same-origin',signal:controller.signal});
+          res=await fetch(new URL(url, location.href).href+'?model=v25',{cache:'reload',credentials:'same-origin',signal:controller.signal});
         }finally{ clearTimeout(timer); }
         if(!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
         const chunk=new Uint8Array(await res.arrayBuffer());
@@ -356,11 +356,12 @@
   function photoLetterbox(w,h,size){const scale=Math.min(size/w,size/h);const nw=Math.round(w*scale),nh=Math.round(h*scale);return {scale,padX:(size-nw)/2,padY:(size-nh)/2};}
   function photoIoU(a,b){const ax1=a.x-a.width/2,ay1=a.y-a.height/2,ax2=a.x+a.width/2,ay2=a.y+a.height/2;const bx1=b.x-b.width/2,by1=b.y-b.height/2,bx2=b.x+b.width/2,by2=b.y+b.height/2;const iw=Math.max(0,Math.min(ax2,bx2)-Math.max(ax1,bx1)),ih=Math.max(0,Math.min(ay2,by2)-Math.max(ay1,by1));const inter=iw*ih;if(!inter)return 0;return inter/(a.width*a.height+b.width*b.height-inter)}
   function photoNms(boxes,iou=0.5){const groups=new Map();boxes.forEach(b=>{if(!groups.has(b.classIndex))groups.set(b.classIndex,[]);groups.get(b.classIndex).push(b)});const out=[];for(const g of groups.values()){g.sort((a,b)=>b.score-a.score);const used=new Array(g.length).fill(false);for(let i=0;i<g.length;i++){if(used[i])continue;out.push(g[i]);for(let j=i+1;j<g.length;j++)if(!used[j]&&photoIoU(g[i],g[j])>iou)used[j]=true}}return out}
-  async function recognizePhoto(file){
-    const img=await createImageBitmap(file);
-    const size=640, lb=photoLetterbox(img.width,img.height,size);
+  // 1回のYOLO推論。sourceX/sourceWを指定すると横方向の一部だけを拡大して認識する。
+  async function recognizePhotoRegion(img,sourceX=0,sourceW=img.width,confidenceThreshold=0.30){
+    const size=640, sourceH=img.height, lb=photoLetterbox(sourceW,sourceH,size);
     const canvas=document.createElement('canvas');canvas.width=size;canvas.height=size;const ctx=canvas.getContext('2d',{willReadFrequently:true});
-    ctx.fillStyle='rgb(114,114,114)';ctx.fillRect(0,0,size,size);ctx.drawImage(img,lb.padX,lb.padY,img.width*lb.scale,img.height*lb.scale);
+    ctx.fillStyle='rgb(114,114,114)';ctx.fillRect(0,0,size,size);
+    ctx.drawImage(img,sourceX,0,sourceW,sourceH,lb.padX,lb.padY,sourceW*lb.scale,sourceH*lb.scale);
     const px=ctx.getImageData(0,0,size,size).data, plane=size*size, data=new Float32Array(3*plane);
     for(let i=0;i<plane;i++){data[i]=px[i*4]/255;data[plane+i]=px[i*4+1]/255;data[plane*2+i]=px[i*4+2]/255}
     const ort=window.ort, session=await photoLoadSession(), input=session.inputNames[0], output=session.outputNames[0];
@@ -370,9 +371,57 @@
     const channels=dims[1], anchors=dims[2], classes=channels-4;
     if(classes!==PHOTO_CLASS_NAMES.length)throw new Error(`認識モデルの牌種数が一致しません（${classes} / ${PHOTO_CLASS_NAMES.length}）`);
     const raw=out.data, candidates=[];
-    for(let a=0;a<anchors;a++){let best=-1,bestScore=0;for(let c=0;c<classes;c++){const sc=raw[(4+c)*anchors+a];if(sc>bestScore){bestScore=sc;best=c}}if(bestScore<0.45)continue;const x=(raw[a]-lb.padX)/lb.scale,y=(raw[anchors+a]-lb.padY)/lb.scale,w=raw[2*anchors+a]/lb.scale,h=raw[3*anchors+a]/lb.scale;if(w>8&&h>8)candidates.push({x,y,width:w,height:h,score:bestScore,classIndex:best})}
-    const kept=photoNms(candidates).sort((a,b)=>a.x-b.x);
-    return kept.map(b=>({label:PHOTO_CLASS_NAMES[b.classIndex],confidence:b.score,x:b.x}));
+    for(let a=0;a<anchors;a++){
+      let best=-1,bestScore=0;
+      for(let c=0;c<classes;c++){const sc=raw[(4+c)*anchors+a];if(sc>bestScore){bestScore=sc;best=c}}
+      if(bestScore<confidenceThreshold)continue;
+      const localX=(raw[a]-lb.padX)/lb.scale, y=(raw[anchors+a]-lb.padY)/lb.scale;
+      const w=raw[2*anchors+a]/lb.scale,h=raw[3*anchors+a]/lb.scale;
+      if(w>8&&h>8)candidates.push({x:sourceX+localX,y,width:w,height:h,score:bestScore,classIndex:best});
+    }
+    return photoNms(candidates,0.50);
+  }
+
+  // 同じ牌が「全体認識」と「分割認識」の両方に出た場合の重複を除去する。
+  function mergePhotoDetections(boxes){
+    const sorted=[...boxes].sort((a,b)=>b.score-a.score), kept=[];
+    for(const b of sorted){
+      const duplicate=kept.some(k=>{
+        // 分割境界では箱サイズが多少変わるため、IoUだけでなく中心距離でも同一牌を判定する。
+        const sameArea=photoIoU(b,k)>0.30;
+        const dx=Math.abs(b.x-k.x), dy=Math.abs(b.y-k.y);
+        const nearCenter=dx<Math.min(b.width,k.width)*0.55 && dy<Math.min(b.height,k.height)*0.55;
+        return sameArea||nearCenter;
+      });
+      if(!duplicate)kept.push(b);
+    }
+    return kept.sort((a,b)=>a.x-b.x);
+  }
+
+  async function recognizePhoto(file){
+    const img=await createImageBitmap(file);
+    try{
+      // まず従来どおり写真全体を認識。閾値は0.45→0.30に下げ、弱い検出も拾う。
+      const whole=await recognizePhotoRegion(img,0,img.width,0.30);
+      if(whole.length>=13){
+        return whole.sort((a,b)=>a.x-b.x).map(b=>({label:PHOTO_CLASS_NAMES[b.classIndex],confidence:b.score,x:b.x}));
+      }
+
+      // 13枚未満なら横長の手牌写真を3分割して再認識する。
+      // 各領域を640x640へ大きく入力することで、14枚を一度に縮小した時の検出漏れを減らす。
+      const overlap=0.12, sliceW=img.width/3;
+      const all=[...whole];
+      for(let i=0;i<3;i++){
+        const baseL=i*sliceW, baseR=(i+1)*sliceW;
+        const x1=Math.max(0,baseL-sliceW*overlap), x2=Math.min(img.width,baseR+sliceW*overlap);
+        const part=await recognizePhotoRegion(img,x1,x2-x1,0.25);
+        all.push(...part);
+      }
+      const kept=mergePhotoDetections(all);
+      return kept.map(b=>({label:PHOTO_CLASS_NAMES[b.classIndex],confidence:b.score,x:b.x}));
+    }finally{
+      if(img.close)img.close();
+    }
   }
   function normalizePhotoTile(label){return label.replace('5mr','5m').replace('5pr','5p').replace('5sr','5s')}
   function applyPhotoTiles(results,target){
@@ -822,7 +871,26 @@
   function formatNum(n){return Number(n).toLocaleString('ja-JP')}
   function aoten(h,fu){return Math.ceil(fu*Math.pow(2,h+2)/100)*100}
   function yakumanMultiplier(ys){return ys.filter(y=>y.type==='yakuman').reduce((a,y)=>a+y.han/13,0)}
-  function scoreYakuman(mult,isRon,dealer){const b=8000*mult;if(isRon)return `${formatNum(b*(dealer?6:4))}点`;if(isSanma()){if(dealer){const each=rules.tsumoLoss?b*2/3:b/3;return `${formatNum(round100(each))}点オール`;}return rules.tsumoLoss?`${formatNum(round100(b/4))}-${formatNum(round100(b/2))}点`:`${formatNum(round100(b/3))}-${formatNum(round100(b*2/3))}点`;}return dealer?`${formatNum(b*2)}点オール`:`${formatNum(b)}-${formatNum(b*2)}点`;}
+  function scoreYakuman(mult,isRon,dealer){
+    // 役満は通常計算の基礎点8000からではなく、確定した役満点を基準にする。
+    // ロン：子32000 / 親48000。三麻ツモ損あり：子8000-16000 / 親16000オール。
+    // 三麻ツモ損なし：添付点数表に合わせ、子12000-20000 / 親24000オール。
+    mult=Number(mult)||1;
+    if(isRon) return `${formatNum((dealer?48000:32000)*mult)}点`;
+    if(isSanma()){
+      if(rules.tsumoLoss){
+        return dealer
+          ? `${formatNum(16000*mult)}点オール`
+          : `${formatNum(8000*mult)}-${formatNum(16000*mult)}点`;
+      }
+      return dealer
+        ? `${formatNum(24000*mult)}点オール`
+        : `${formatNum(12000*mult)}-${formatNum(20000*mult)}点`;
+    }
+    return dealer
+      ? `${formatNum(16000*mult)}点オール`
+      : `${formatNum(8000*mult)}-${formatNum(16000*mult)}点`;
+  }
 
   function renderShape(d){
     const box=el('selectedShape'); box.innerHTML=''; if(!d)return;
