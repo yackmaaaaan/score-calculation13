@@ -289,27 +289,57 @@
   // 写真認証：YOLO/ONNXをブラウザ内で実行する。
   // 認識後は既存の「選択した手牌」にそのまま反映する。
   // ============================================================
-  const PHOTO_MODEL_URL='https://cdn.jsdelivr.net/gh/MMitch42/RiichiCam@main/public/models/tile-detector.onnx';
+  // モデルはGitHub本体・Git LFS用media URL・jsDelivrの順で試す。
+  // GitHub側でモデルがLFS管理になっていても、media.githubusercontent.comなら実体を取得できる。
+  const PHOTO_MODEL_URLS=[
+    'https://media.githubusercontent.com/media/MMitch42/RiichiCam/main/public/models/tile-detector.onnx',
+    'https://raw.githubusercontent.com/MMitch42/RiichiCam/refs/heads/main/public/models/tile-detector.onnx',
+    'https://cdn.jsdelivr.net/gh/MMitch42/RiichiCam@main/public/models/tile-detector.onnx'
+  ];
   const PHOTO_CLASS_NAMES=['1m','1p','1s','1z','2m','2p','2s','2z','3m','3p','3s','3z','4m','4p','4s','4z','5m','5mr','5p','5pr','5s','5sr','5z','6m','6p','6s','6z','7m','7p','7s','7z','8m','8p','8s','9m','9p','9s'];
   let photoSession=null;
   let photoSessionPromise=null;
+
+  async function photoFetchModel(){
+    let lastErr=null;
+    for(const url of PHOTO_MODEL_URLS){
+      try{
+        const res=await fetch(url,{cache:'no-store',mode:'cors'});
+        if(!res.ok) throw new Error(`HTTP ${res.status}`);
+        const buf=await res.arrayBuffer();
+        // Git LFSのポインタ文字列を誤ってモデルとして渡さない。
+        if(buf.byteLength<100000) {
+          const head=new TextDecoder().decode(new Uint8Array(buf.slice(0,120)));
+          if(head.includes('git-lfs.github.com/spec')) throw new Error('Git LFSポインタが返されました');
+          throw new Error(`モデルファイルが小さすぎます（${buf.byteLength} bytes）`);
+        }
+        return new Uint8Array(buf);
+      }catch(err){
+        lastErr=err;
+        console.warn('画像認証モデル取得失敗:',url,err);
+      }
+    }
+    throw new Error(`画像認証モデルを取得できませんでした：${lastErr?.message||lastErr||'unknown error'}`);
+  }
 
   async function photoLoadSession(){
     if(photoSession) return photoSession;
     if(photoSessionPromise) return photoSessionPromise;
     if(!window.ort) throw new Error('画像認証エンジンを読み込めませんでした');
+    // GitHub PagesではWebGPU/WASMの相性問題が端末ごとに出るため、まずWASMで確実に初期化する。
     window.ort.env.wasm.wasmPaths='https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/';
-    window.ort.env.wasm.proxy=true;
+    window.ort.env.wasm.proxy=false;
     photoSessionPromise=(async()=>{
+      const model=await photoFetchModel();
       try{
-        // WebGPUを優先し、WebGPU周りでセッション作成に失敗した端末はWASMへ明示的にフォールバック。
-        return await window.ort.InferenceSession.create(PHOTO_MODEL_URL,{executionProviders:['webgpu','wasm']});
-      }catch(firstErr){
+        return await window.ort.InferenceSession.create(model,{executionProviders:['wasm']});
+      }catch(wasmErr){
+        // WASM初期化に失敗した端末だけWebGPUを試す。
         try{
-          return await window.ort.InferenceSession.create(PHOTO_MODEL_URL,{executionProviders:['wasm']});
-        }catch(secondErr){
-          const a=firstErr?.message||String(firstErr), b=secondErr?.message||String(secondErr);
-          throw new Error(`画像認証モデルを読み込めませんでした。WebGPU: ${a} / WASM: ${b}`);
+          return await window.ort.InferenceSession.create(model,{executionProviders:['webgpu']});
+        }catch(gpuErr){
+          const a=wasmErr?.message||String(wasmErr), b=gpuErr?.message||String(gpuErr);
+          throw new Error(`画像認証モデルを読み込めませんでした。WASM: ${a} / WebGPU: ${b}`);
         }
       }
     })().then(s=>{photoSession=s;return s}).catch(err=>{photoSessionPromise=null;throw err});
@@ -962,5 +992,5 @@
 
   // Initial setup
   updateRuleSummary();loadSettingsUI();syncPlayerModeUI();syncRuleEffects();updateSpecialLabel();syncManualConflicts();renderHand();renderWin();renderMelds();renderWaitHand();renderWaitResult();manualCalc();analyze();
-  if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js?v=16').catch(()=>{}));}
+  if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js?v=17').catch(()=>{}));}
 })();
