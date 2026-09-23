@@ -289,32 +289,43 @@
   // 写真認証：YOLO/ONNXをブラウザ内で実行する。
   // 認識後は既存の「選択した手牌」にそのまま反映する。
   // ============================================================
-  // 画像認証モデルはGitHub Releaseに置いた固定モデルを使用する。
-  // アプリ本体には約80MBのONNXを同梱しないため、更新ZIPを軽量に保てる。
-  const PHOTO_MODEL_URL='https://github.com/yackmaaaaan/score-calculation13/releases/download/model-v1/tile-detector.onnx';
+  // 画像認証モデルは同一GitHub Pages内の分割ファイルを読み込み、ブラウザ内で結合する。
+  // 各ファイルを20MiB以下にすることでGitHubのブラウザ画面からアップロードできる。
+  const PHOTO_MODEL_PARTS=[
+    './model/tile-detector.part0',
+    './model/tile-detector.part1',
+    './model/tile-detector.part2',
+    './model/tile-detector.part3'
+  ];
   const PHOTO_CLASS_NAMES=['1m','1p','1s','1z','2m','2p','2s','2z','3m','3p','3s','3z','4m','4p','4s','4z','5m','5mr','5p','5pr','5s','5sr','5z','6m','6p','6s','6z','7m','7p','7s','7z','8m','8p','8s','9m','9p','9s'];
   let photoSession=null;
   let photoSessionPromise=null;
 
   async function photoFetchModel(){
-    const url=PHOTO_MODEL_URL;
     try{
-      const controller=new AbortController();
-      const timer=setTimeout(()=>controller.abort(),120000);
-      let res;
-      try{
-        res=await fetch(url,{cache:'force-cache',mode:'cors',redirect:'follow',signal:controller.signal});
-      }finally{clearTimeout(timer)}
-      if(!res.ok) throw new Error(`HTTP ${res.status}`);
-      const buf=await res.arrayBuffer();
-      if(buf.byteLength<100000){
-        const head=new TextDecoder().decode(new Uint8Array(buf.slice(0,120)));
-        if(head.includes('git-lfs.github.com/spec')) throw new Error('Git LFSポインタが返されました');
-        throw new Error(`モデルファイルが小さすぎます（${buf.byteLength} bytes）`);
+      const chunks=[];
+      let total=0;
+      for(const url of PHOTO_MODEL_PARTS){
+        const controller=new AbortController();
+        const timer=setTimeout(()=>controller.abort(),120000);
+        let res;
+        try{
+          // 同一オリジンから直接取得。Service Workerのモデルキャッシュには依存しない。
+          res=await fetch(url,{cache:'no-store',signal:controller.signal});
+        }finally{ clearTimeout(timer); }
+        if(!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+        const chunk=new Uint8Array(await res.arrayBuffer());
+        if(chunk.byteLength<1) throw new Error(`${url}: ファイルが空です`);
+        chunks.push(chunk);
+        total+=chunk.byteLength;
       }
-      return new Uint8Array(buf);
+      if(total<1000000) throw new Error(`モデル全体が小さすぎます（${total} bytes）`);
+      const model=new Uint8Array(total);
+      let offset=0;
+      for(const chunk of chunks){ model.set(chunk,offset); offset+=chunk.byteLength; }
+      return model;
     }catch(err){
-      console.error('画像認証モデル取得失敗:',url,err);
+      console.error('画像認証モデル取得失敗:',err);
       throw new Error(`画像認証モデルを取得できませんでした：${err?.message||err||'unknown error'}`);
     }
   }
