@@ -261,16 +261,16 @@
   function formatScorePart(n){return Number(n).toLocaleString('ja-JP');}
   function excelScoreResult(han,fu,parent,isRon){
     const part=scoreParts(han,fu,parent,isRon);
-    if(isRon) return `${formatScorePart(part.ron)}点`;
-    if(isSanma()) return parent ? `${formatScorePart(part.tsumo)}点オール` : `${formatScorePart(part.tsumoLow)}-${formatScorePart(part.tsumoHigh)}点`;
-    if(parent) return `${formatScorePart(part.tsumo)}点オール`;
-    return `${formatScorePart(part.tsumoLow)}-${formatScorePart(part.tsumoHigh)}点`;
+    if(isRon) return `${formatScorePart(part.ron)}`;
+    if(isSanma()) return parent ? `${formatScorePart(part.tsumo)}オール` : `${formatScorePart(part.tsumoLow)}-${formatScorePart(part.tsumoHigh)}`;
+    if(parent) return `${formatScorePart(part.tsumo)}オール`;
+    return `${formatScorePart(part.tsumoLow)}-${formatScorePart(part.tsumoHigh)}`;
   }
   function excelAoten(han,fu,parent,isRon){
     const raw=(parent?48:32)*fu*Math.pow(2,han-1);
-    if(isRon) return `${formatScorePart(raw)}点`;
-    if(parent) return `${formatScorePart(raw/3)}点オール`;
-    return `${formatScorePart(raw/4)}-${formatScorePart(raw/2)}点`;
+    if(isRon) return `${formatScorePart(raw)}`;
+    if(parent) return `${formatScorePart(raw/3)}オール`;
+    return `${formatScorePart(raw/4)}-${formatScorePart(raw/2)}`;
   }
 
   // Hand picker
@@ -311,7 +311,7 @@
         let res;
         try{
           // 同一オリジンから直接取得。Service Workerのモデルキャッシュには依存しない。
-          res=await fetch(new URL(url, location.href).href+'?model=v25',{cache:'reload',credentials:'same-origin',signal:controller.signal});
+          res=await fetch(new URL(url, location.href).href+'?model=v27',{cache:'reload',credentials:'same-origin',signal:controller.signal});
         }finally{ clearTimeout(timer); }
         if(!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
         const chunk=new Uint8Array(await res.arrayBuffer());
@@ -398,28 +398,95 @@
     return kept.sort((a,b)=>a.x-b.x);
   }
 
+  // v27: RiichiCam/旧モデルへ渡す前に、写真から横一列の手牌らしい領域を自動トリミングする。
+  // 追加AIモデルは使わず、明るい牌面＋縦エッジが横方向に連続する帯を画像処理で探す。
+  async function autoCropHandRegion(img){
+    const maxW=420, scale=Math.min(1,maxW/img.width), w=Math.max(80,Math.round(img.width*scale)), h=Math.max(80,Math.round(img.height*scale));
+    const c=document.createElement('canvas'); c.width=w;c.height=h;
+    const cx=c.getContext('2d',{willReadFrequently:true}); cx.drawImage(img,0,0,w,h);
+    const d=cx.getImageData(0,0,w,h).data;
+    const lum=new Float32Array(w*h), neutral=new Uint8Array(w*h);
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+      const i=(y*w+x)*4,r=d[i],g=d[i+1],b=d[i+2],mx=Math.max(r,g,b),mn=Math.min(r,g,b),L=.299*r+.587*g+.114*b;
+      lum[y*w+x]=L; neutral[y*w+x]=(L>125 && mx-mn<115)?1:0;
+    }
+    const row=new Float32Array(h);
+    for(let y=1;y<h-1;y++){
+      let white=0,edge=0;
+      for(let x=1;x<w;x++){
+        white+=neutral[y*w+x];
+        if(Math.abs(lum[y*w+x]-lum[y*w+x-1])>32) edge++;
+      }
+      // 手牌は画面中央～下側に写ることが多いので、ごく弱い位置重みだけ加える。
+      const pos=.92+.16*(y/h);
+      row[y]=pos*(white/w*.68+Math.min(edge/w*3,1)*.32);
+    }
+    // 平滑化
+    const sm=new Float32Array(h), rad=Math.max(2,Math.round(h*.012));
+    for(let y=0;y<h;y++){let sum=0,n=0;for(let k=Math.max(0,y-rad);k<=Math.min(h-1,y+rad);k++){sum+=row[k];n++}sm[y]=sum/n}
+    let peak=1;for(let y=2;y<h-2;y++)if(sm[y]>sm[peak])peak=y;
+    const cut=sm[peak]*.62;
+    let y1=peak,y2=peak; while(y1>1&&sm[y1-1]>cut)y1--; while(y2<h-2&&sm[y2+1]>cut)y2++;
+    // 帯が薄すぎる場合は牌高を想定して広げる。
+    const minBand=Math.round(h*.12); if(y2-y1<minBand){const mid=(y1+y2)/2;y1=Math.max(0,Math.round(mid-minBand/2));y2=Math.min(h-1,Math.round(mid+minBand/2))}
+    const col=new Float32Array(w); const bh=Math.max(1,y2-y1+1);
+    for(let x=1;x<w-1;x++){
+      let white=0,vedge=0;
+      for(let y=y1;y<=y2;y++){
+        white+=neutral[y*w+x];
+        if(Math.abs(lum[y*w+x]-lum[y*w+x-1])>30)vedge++;
+      }
+      col[x]=white/bh*.72+Math.min(vedge/bh*2.5,1)*.28;
+    }
+    // 列スコアを平滑化し、手牌列を含む最長の有効範囲を求める。
+    const cs=new Float32Array(w), cr=Math.max(1,Math.round(w*.008));
+    for(let x=0;x<w;x++){let sum=0,n=0;for(let k=Math.max(0,x-cr);k<=Math.min(w-1,x+cr);k++){sum+=col[k];n++}cs[x]=sum/n}
+    let maxC=0;for(const v of cs)if(v>maxC)maxC=v; const ccut=Math.max(.10,maxC*.28);
+    const active=[];for(let x=0;x<w;x++)if(cs[x]>=ccut)active.push(x);
+    let x1=0,x2=w-1;
+    if(active.length){
+      // 小さな空白は牌間の隙間として結合する。
+      const gap=Math.round(w*.055); let bestA=active[0],bestB=active[0],a=active[0],prev=active[0];
+      for(let i=1;i<active.length;i++){const x=active[i];if(x-prev>gap){if(prev-a>bestB-bestA){bestA=a;bestB=prev}a=x}prev=x}
+      if(prev-a>bestB-bestA){bestA=a;bestB=prev} x1=bestA;x2=bestB;
+    }
+    const padX=Math.round((x2-x1)*.045), padY=Math.round((y2-y1)*.35);
+    x1=Math.max(0,x1-padX);x2=Math.min(w-1,x2+padX);y1=Math.max(0,y1-padY);y2=Math.min(h-1,y2+padY);
+    // 不自然に狭い検出は安全のため元画像を使用する。
+    if((x2-x1)<w*.32 || (y2-y1)<h*.07 || (y2-y1)>h*.60) return {bitmap:img,crop:null};
+    const sx=Math.round(x1/scale),sy=Math.round(y1/scale),sw=Math.min(img.width-Math.round(x1/scale),Math.round((x2-x1+1)/scale)),sh=Math.min(img.height-Math.round(y1/scale),Math.round((y2-y1+1)/scale));
+    const out=document.createElement('canvas');out.width=sw;out.height=sh;out.getContext('2d').drawImage(img,sx,sy,sw,sh,0,0,sw,sh);
+    const bitmap=await createImageBitmap(out);
+    return {bitmap,crop:{x:sx,y:sy,width:sw,height:sh}};
+  }
+
   async function recognizePhoto(file){
     const img=await createImageBitmap(file);
+    let work=img;
     try{
-      // まず従来どおり写真全体を認識。閾値は0.45→0.30に下げ、弱い検出も拾う。
-      const whole=await recognizePhotoRegion(img,0,img.width,0.30);
+      // v27: まず手牌列を自動検出してトリミングし、その画像だけを旧RiichiCam認識モデルへ渡す。
+      const cropped=await autoCropHandRegion(img);
+      work=cropped.bitmap;
+      console.info('[photo v27] auto crop',cropped.crop||'fallback: original image');
+      const whole=await recognizePhotoRegion(work,0,work.width,0.30);
       if(whole.length>=13){
         return whole.sort((a,b)=>a.x-b.x).map(b=>({label:PHOTO_CLASS_NAMES[b.classIndex],confidence:b.score,x:b.x}));
       }
 
       // 13枚未満なら横長の手牌写真を3分割して再認識する。
       // 各領域を640x640へ大きく入力することで、14枚を一度に縮小した時の検出漏れを減らす。
-      const overlap=0.12, sliceW=img.width/3;
+      const overlap=0.12, sliceW=work.width/3;
       const all=[...whole];
       for(let i=0;i<3;i++){
         const baseL=i*sliceW, baseR=(i+1)*sliceW;
-        const x1=Math.max(0,baseL-sliceW*overlap), x2=Math.min(img.width,baseR+sliceW*overlap);
-        const part=await recognizePhotoRegion(img,x1,x2-x1,0.25);
+        const x1=Math.max(0,baseL-sliceW*overlap), x2=Math.min(work.width,baseR+sliceW*overlap);
+        const part=await recognizePhotoRegion(work,x1,x2-x1,0.25);
         all.push(...part);
       }
       const kept=mergePhotoDetections(all);
       return kept.map(b=>({label:PHOTO_CLASS_NAMES[b.classIndex],confidence:b.score,x:b.x}));
     }finally{
+      if(work!==img && work.close)work.close();
       if(img.close)img.close();
     }
   }
@@ -847,7 +914,7 @@
   }
   function isSuuankouTanki(s){return isSuuankou(s)&&s.pair&&s.pair[0]===win}
   function isChuurenShape(all){const suits=unique(all.map(suit));if(suits.length!==1||isHonor(all[0]))return false;const c=counts(all);const ss=suits[0];const req={1:3,2:1,3:1,4:1,5:1,6:1,7:1,8:1,9:3};return Object.keys(req).every(n=>(c[`${n}${ss}`]||0)>=req[n])}
-  function isPureChuuren(all,w){if(!w)return false;const c=counts(all),ss=suit(all[0]);const base={1:3,2:1,3:1,4:1,5:1,6:1,7:1,8:1,9:3};return Object.keys(base).every(n=>(c[`${n}${ss}`]||0)===base[n])&&c[w]===base[w]+1;}
+  function isPureChuuren(all,w){if(!w||all.length!==14||isHonor(w))return false;const ss=suit(w);if(all.some(t=>isHonor(t)||suit(t)!==ss))return false;const before=[...all];const wi=before.indexOf(w);if(wi<0)return false;before.splice(wi,1);const c=counts(before),base={1:3,2:1,3:1,4:1,5:1,6:1,7:1,8:1,9:3};return Object.keys(base).every(n=>(c[`${n}${ss}`]||0)===base[n]);}
 
   function fuCalc(d){
     if(isChiitoi())return 25;
@@ -876,20 +943,20 @@
     // ロン：子32000 / 親48000。三麻ツモ損あり：子8000-16000 / 親16000オール。
     // 三麻ツモ損なし：添付点数表に合わせ、子12000-20000 / 親24000オール。
     mult=Number(mult)||1;
-    if(isRon) return `${formatNum((dealer?48000:32000)*mult)}点`;
+    if(isRon) return `${formatNum((dealer?48000:32000)*mult)}`;
     if(isSanma()){
       if(rules.tsumoLoss){
         return dealer
-          ? `${formatNum(16000*mult)}点オール`
-          : `${formatNum(8000*mult)}-${formatNum(16000*mult)}点`;
+          ? `${formatNum(16000*mult)}オール`
+          : `${formatNum(8000*mult)}-${formatNum(16000*mult)}`;
       }
       return dealer
-        ? `${formatNum(24000*mult)}点オール`
-        : `${formatNum(12000*mult)}-${formatNum(20000*mult)}点`;
+        ? `${formatNum(24000*mult)}オール`
+        : `${formatNum(12000*mult)}-${formatNum(20000*mult)}`;
     }
     return dealer
-      ? `${formatNum(16000*mult)}点オール`
-      : `${formatNum(8000*mult)}-${formatNum(16000*mult)}点`;
+      ? `${formatNum(16000*mult)}オール`
+      : `${formatNum(8000*mult)}-${formatNum(16000*mult)}`;
   }
 
   function renderShape(d){
@@ -996,7 +1063,7 @@
     if(isSanma() && !rules.tsumoLoss){
       if(scoreRange==='limit'){
         let html='<table class="score-table limit-table"><thead><tr><th>段階</th><th>ロン</th><th>ツモ</th></tr></thead><tbody>';
-        SANMA_NO_LOSS_LIMIT[dealer?'parent':'child'].forEach(([name,ron,ts])=>{html+=`<tr><th class="limit-name">${name}</th><td><span class="ron">${formatScorePart(ron)}点</span></td><td><span class="tsumo">${ts}点</span></td></tr>`});
+        SANMA_NO_LOSS_LIMIT[dealer?'parent':'child'].forEach(([name,ron,ts])=>{html+=`<tr><th class="limit-name">${name}</th><td><span class="ron">${formatScorePart(ron)}</span></td><td><span class="tsumo">${ts}</span></td></tr>`});
         html+='</tbody></table>';wrap.innerHTML=html;return;
       }
       const data=SANMA_NO_LOSS_NORMAL[dealer?'parent':'child'], fus=[20,25,30,40,50,60,70,80,90,100,110], hans=[1,2,3,4];
