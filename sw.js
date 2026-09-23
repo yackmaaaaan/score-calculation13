@@ -1,5 +1,5 @@
-const CACHE="mahjong-complete-v14";
-const CORE=["./","./index.html","./style.css?v=14","./app.js?v=14","./manifest.json?v=14","./icon/app-icon-192-v14.png","./icon/app-icon-512-v14.png","./icon/title-calculator-v9.png","./icon/title-score-table.svg","./r5m.png","./r5p.png","./r5s.png"];
+const CACHE="mahjong-complete-v16";
+const CORE=["./","./index.html","./style.css?v=16","./app.js?v=16","./manifest.json?v=16","./icon/app-icon-32-v16.png","./icon/app-icon-192-v16.png","./icon/app-icon-512-v16.png","./icon/title-calculator-v9.png","./icon/title-score-table.svg","./r5m.png","./r5p.png","./r5s.png"];
 self.addEventListener("install",e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(CORE)).then(()=>self.skipWaiting())));
 self.addEventListener("activate",e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener("fetch",e=>{

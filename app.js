@@ -289,18 +289,30 @@
   // 写真認証：YOLO/ONNXをブラウザ内で実行する。
   // 認識後は既存の「選択した手牌」にそのまま反映する。
   // ============================================================
-  const PHOTO_MODEL_URL='https://raw.githubusercontent.com/MMitch42/RiichiCam/main/public/models/tile-detector.onnx';
+  const PHOTO_MODEL_URL='https://cdn.jsdelivr.net/gh/MMitch42/RiichiCam@main/public/models/tile-detector.onnx';
   const PHOTO_CLASS_NAMES=['1m','1p','1s','1z','2m','2p','2s','2z','3m','3p','3s','3z','4m','4p','4s','4z','5m','5mr','5p','5pr','5s','5sr','5z','6m','6p','6s','6z','7m','7p','7s','7z','8m','8p','8s','9m','9p','9s'];
   let photoSession=null;
   let photoSessionPromise=null;
 
-  function photoLoadSession(){
-    if(photoSession) return Promise.resolve(photoSession);
+  async function photoLoadSession(){
+    if(photoSession) return photoSession;
     if(photoSessionPromise) return photoSessionPromise;
-    if(!window.ort) return Promise.reject(new Error('画像認証エンジンを読み込めませんでした'));
+    if(!window.ort) throw new Error('画像認証エンジンを読み込めませんでした');
     window.ort.env.wasm.wasmPaths='https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/';
     window.ort.env.wasm.proxy=true;
-    photoSessionPromise=window.ort.InferenceSession.create(PHOTO_MODEL_URL,{executionProviders:['webgpu','wasm']}).then(s=>{photoSession=s;return s});
+    photoSessionPromise=(async()=>{
+      try{
+        // WebGPUを優先し、WebGPU周りでセッション作成に失敗した端末はWASMへ明示的にフォールバック。
+        return await window.ort.InferenceSession.create(PHOTO_MODEL_URL,{executionProviders:['webgpu','wasm']});
+      }catch(firstErr){
+        try{
+          return await window.ort.InferenceSession.create(PHOTO_MODEL_URL,{executionProviders:['wasm']});
+        }catch(secondErr){
+          const a=firstErr?.message||String(firstErr), b=secondErr?.message||String(secondErr);
+          throw new Error(`画像認証モデルを読み込めませんでした。WebGPU: ${a} / WASM: ${b}`);
+        }
+      }
+    })().then(s=>{photoSession=s;return s}).catch(err=>{photoSessionPromise=null;throw err});
     return photoSessionPromise;
   }
   function photoLetterbox(w,h,size){const scale=Math.min(size/w,size/h);const nw=Math.round(w*scale),nh=Math.round(h*scale);return {scale,padX:(size-nw)/2,padY:(size-nh)/2};}
@@ -315,10 +327,12 @@
     for(let i=0;i<plane;i++){data[i]=px[i*4]/255;data[plane+i]=px[i*4+1]/255;data[plane*2+i]=px[i*4+2]/255}
     const ort=window.ort, session=await photoLoadSession(), input=session.inputNames[0], output=session.outputNames[0];
     const result=await session.run({[input]:new ort.Tensor('float32',data,[1,3,size,size])});
-    const out=result[output], dims=out.dims, channels=dims[1], anchors=dims[2], classes=channels-4;
+    const out=result[output], dims=out.dims;
+    if(dims.length!==3 || dims[0]!==1) throw new Error(`認識モデルの出力形式が不正です（${dims.join('x')}）`);
+    const channels=dims[1], anchors=dims[2], classes=channels-4;
     if(classes!==PHOTO_CLASS_NAMES.length)throw new Error(`認識モデルの牌種数が一致しません（${classes} / ${PHOTO_CLASS_NAMES.length}）`);
     const raw=out.data, candidates=[];
-    for(let a=0;a<anchors;a++){let best=-1,bestScore=0;for(let c=0;c<classes;c++){const sc=raw[(4+c)*anchors+a];if(sc>bestScore){bestScore=sc;best=c}}if(bestScore<0.35)continue;const x=(raw[a]-lb.padX)/lb.scale,y=(raw[anchors+a]-lb.padY)/lb.scale,w=raw[2*anchors+a]/lb.scale,h=raw[3*anchors+a]/lb.scale;if(w>8&&h>8)candidates.push({x,y,width:w,height:h,score:bestScore,classIndex:best})}
+    for(let a=0;a<anchors;a++){let best=-1,bestScore=0;for(let c=0;c<classes;c++){const sc=raw[(4+c)*anchors+a];if(sc>bestScore){bestScore=sc;best=c}}if(bestScore<0.45)continue;const x=(raw[a]-lb.padX)/lb.scale,y=(raw[anchors+a]-lb.padY)/lb.scale,w=raw[2*anchors+a]/lb.scale,h=raw[3*anchors+a]/lb.scale;if(w>8&&h>8)candidates.push({x,y,width:w,height:h,score:bestScore,classIndex:best})}
     const kept=photoNms(candidates).sort((a,b)=>a.x-b.x);
     return kept.map(b=>({label:PHOTO_CLASS_NAMES[b.classIndex],confidence:b.score,x:b.x}));
   }
@@ -838,9 +852,56 @@
     if(raw >= (dealer?12000:8000)) return '満貫';
     return scoreResult(h,fu,dealer,isRon).text;
   }
+  const SANMA_NO_LOSS_NORMAL={
+    child:{
+      20:[null,{ron:null,tsumo:'600/900'},{ron:2600,tsumo:'1100/1700'},{ron:5200,tsumo:'2000/3300'}],
+      25:[null,{ron:null,tsumo:null},{ron:1600,tsumo:null},{ron:3200,tsumo:'1200/2000'},{ron:6400,tsumo:'2400/4000'}],
+      30:[null,{ron:1000,tsumo:'500/700'},{ron:2000,tsumo:'800/1300'},{ron:3900,tsumo:'1500/2500'},null],
+      40:[null,{ron:1300,tsumo:'600/900'},{ron:2600,tsumo:'1100/1700'},{ron:5200,tsumo:'2000/3300'},null],
+      50:[null,{ron:1600,tsumo:'600/1000'},{ron:3200,tsumo:'1200/2000'},{ron:6400,tsumo:'2400/4000'},null],
+      60:[null,{ron:2000,tsumo:'800/1300'},{ron:3900,tsumo:'1500/2500'},null,null],
+      70:[null,{ron:2300,tsumo:'900/1500'},{ron:4500,tsumo:'1800/2900'},null,null],
+      80:[null,{ron:2600,tsumo:'1100/1700'},{ron:5200,tsumo:'2000/3300'},null,null],
+      90:[null,{ron:2900,tsumo:'1200/1900'},{ron:5800,tsumo:'2300/3700'},null,null],
+      100:[null,{ron:3200,tsumo:'1200/2000'},{ron:6400,tsumo:'2400/4000'},null,null],
+      110:[null,null,{ron:7100,tsumo:'2700/4500'},null,null]
+    },
+    parent:{
+      20:[null,{ron:null,tsumo:'1100オール'},{ron:3900,tsumo:'2000オール'},{ron:7700,tsumo:'3900オール'}],
+      25:[null,{ron:null,tsumo:null},{ron:2400,tsumo:null},{ron:4800,tsumo:'2400オール'},{ron:9600,tsumo:'4800オール'}],
+      30:[null,{ron:1500,tsumo:'800オール'},{ron:2900,tsumo:'1500オール'},{ron:5800,tsumo:'3000オール'},null],
+      40:[null,{ron:2000,tsumo:'1100オール'},{ron:3900,tsumo:'2000オール'},{ron:7700,tsumo:'3900オール'},null],
+      50:[null,{ron:2400,tsumo:'1200オール'},{ron:4800,tsumo:'2400オール'},{ron:9600,tsumo:'4800オール'},null],
+      60:[null,{ron:2900,tsumo:'1500オール'},{ron:5800,tsumo:'3000オール'},null,null],
+      70:[null,{ron:3400,tsumo:'1800オール'},{ron:6800,tsumo:'3500オール'},null,null],
+      80:[null,{ron:3900,tsumo:'2000オール'},{ron:7700,tsumo:'3900オール'},null,null],
+      90:[null,{ron:4400,tsumo:'2300オール'},{ron:8700,tsumo:'4400オール'},null,null],
+      100:[null,{ron:4800,tsumo:'2400オール'},{ron:9600,tsumo:'4800オール'},null,null],
+      110:[null,null,{ron:10600,tsumo:'5400オール'},null,null]
+    }
+  };
+  const SANMA_NO_LOSS_LIMIT={
+    child:[['満貫',8000,'3000/5000'],['跳満',12000,'4500/7500'],['倍満',16000,'6000/10000'],['三倍満',24000,'9000/15000'],['役満',32000,'12000/20000']],
+    parent:[['満貫',12000,'6000オール'],['跳満',18000,'9000オール'],['倍満',24000,'12000オール'],['三倍満',36000,'18000オール'],['役満',48000,'24000オール']]
+  };
   function renderScoreTable(){
     const wrap=el('scoreTableWrap');wrap.innerHTML='';
     const dealer=scorePlayer==='parent';
+    if(isSanma() && !rules.tsumoLoss){
+      if(scoreRange==='limit'){
+        let html='<table class="score-table limit-table"><thead><tr><th>段階</th><th>ロン</th><th>ツモ</th></tr></thead><tbody>';
+        SANMA_NO_LOSS_LIMIT[dealer?'parent':'child'].forEach(([name,ron,ts])=>{html+=`<tr><th class="limit-name">${name}</th><td><span class="ron">${formatScorePart(ron)}点</span></td><td><span class="tsumo">${ts}点</span></td></tr>`});
+        html+='</tbody></table>';wrap.innerHTML=html;return;
+      }
+      const data=SANMA_NO_LOSS_NORMAL[dealer?'parent':'child'], fus=[20,25,30,40,50,60,70,80,90,100,110], hans=[1,2,3,4];
+      let html='<table class="score-table"><thead><tr><th>符 ＼ 飜</th>'+hans.map(h=>`<th>${h}飜</th>`).join('')+'</tr></thead><tbody>';
+      fus.forEach(f=>{html+=`<tr><th>${f}符</th>`;hans.forEach(h=>{
+        const cell=data[f]?.[h]??null;
+        if(!cell) html+='<td><span class="ron">—</span><span class="tsumo">—</span></td>';
+        else html+=`<td><span class="ron">${cell.ron==null?'—':formatScorePart(cell.ron)}</span><span class="tsumo">${cell.tsumo==null?'—':cell.tsumo}</span></td>`;
+      });html+='</tr>'});
+      html+='</tbody></table>';wrap.innerHTML=html;return;
+    }
     if(scoreRange==='limit'){
       const rows=[['満貫',5],['跳満',6],['倍満',8],['三倍満',11],['数え役満',13]];
       let html='<table class="score-table limit-table"><thead><tr><th>段階</th><th>ロン</th><th>ツモ</th></tr></thead><tbody>';
@@ -851,10 +912,8 @@
     const fus=[20,25,30,40,50,60,70,80,90,100,110], hans=[1,2,3,4];
     let html='<table class="score-table"><thead><tr><th>符 ＼ 飜</th>'+hans.map(h=>`<th>${h}飜</th>`).join('')+'</tr></thead><tbody>';
     fus.forEach(f=>{html+=`<tr><th>${f}符</th>`;hans.forEach(h=>{
-      // 20符2飜はツモのみ。20符1飜・25符1飜も通常のロン表には存在しない。
-      const noRon=(f===20)||(f===25&&h===1);
-      const noTsumo=(f===20&&h<2)||(f===25&&h<3);
-      if(noRon && noTsumo){html+=`<td><span class="ron">—</span><span class="tsumo">—</span></td>`;}
+      const noRon=(f===20)||(f===25&&h===1); const noTsumo=(f===20&&h<2)||(f===25&&h<3);
+      if(noRon && noTsumo)html+='<td><span class="ron">—</span><span class="tsumo">—</span></td>';
       else if(noRon){const ts=tableCell(h,f,dealer,false);html+=`<td><span class="ron">—</span><span class="tsumo">${ts}</span></td>`;}
       else if(noTsumo){const r=tableCell(h,f,dealer,true);html+=`<td><span class="ron">${r}</span><span class="tsumo">—</span></td>`;}
       else {const r=tableCell(h,f,dealer,true),ts=tableCell(h,f,dealer,false);html+=`<td><span class="ron">${r}</span><span class="tsumo">${ts}</span></td>`;}
@@ -878,7 +937,12 @@
       } else if(y.han>=13){
         openV='役満';
       }
-      const freq=y.freq==null?'—':`${y.freq.toFixed(y.freq<0.1?3:2)}%`;
+      const freq=y.freq==null?'—':(()=>{
+        if(y.freq===0)return '0.0000%';
+        let digits=y.freq<0.1?4:2;
+        while(Number(y.freq.toFixed(digits))===0 && digits<10)digits++;
+        return `${y.freq.toFixed(digits)}%`;
+      })();
       return `<tr><td><strong>${y.name}</strong></td><td>${closedV}</td><td>${openV}</td><td>${freq}</td></tr>`;
     }).join('');
   }
@@ -898,5 +962,5 @@
 
   // Initial setup
   updateRuleSummary();loadSettingsUI();syncPlayerModeUI();syncRuleEffects();updateSpecialLabel();syncManualConflicts();renderHand();renderWin();renderMelds();renderWaitHand();renderWaitResult();manualCalc();analyze();
-  if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js?v=10').catch(()=>{}));}
+  if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js?v=16').catch(()=>{}));}
 })();
