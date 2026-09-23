@@ -289,42 +289,34 @@
   // 写真認証：YOLO/ONNXをブラウザ内で実行する。
   // 認識後は既存の「選択した手牌」にそのまま反映する。
   // ============================================================
-  // RiichiCam本家のVercel公開モデルを第一候補にする。
-  // GitHubのモデルURLは現在HTTP 404になるため、そこだけに依存しない。
-  // GitHub PagesからVercelへ直接fetchできない環境向けにCORSプロキシも用意する。
-  // モデルはGitHub Pages内に同梱して、外部URLやCORSに依存しない。
-  // /models/tile-detector.onnx はRiichiCam系の37クラスYOLOモデル。
-  const PHOTO_MODEL_ORIGIN='./models/tile-detector.onnx';
-  const PHOTO_MODEL_URLS=[PHOTO_MODEL_ORIGIN];
+  // 画像認証モデルはGitHub Releaseに置いた固定モデルを使用する。
+  // アプリ本体には約80MBのONNXを同梱しないため、更新ZIPを軽量に保てる。
+  const PHOTO_MODEL_URL='https://github.com/yackmaaaaan/score-calculation13/releases/download/model-v1/tile-detector.onnx';
   const PHOTO_CLASS_NAMES=['1m','1p','1s','1z','2m','2p','2s','2z','3m','3p','3s','3z','4m','4p','4s','4z','5m','5mr','5p','5pr','5s','5sr','5z','6m','6p','6s','6z','7m','7p','7s','7z','8m','8p','8s','9m','9p','9s'];
   let photoSession=null;
   let photoSessionPromise=null;
 
   async function photoFetchModel(){
-    let lastErr=null;
-    for(const url of PHOTO_MODEL_URLS){
+    const url=PHOTO_MODEL_URL;
+    try{
+      const controller=new AbortController();
+      const timer=setTimeout(()=>controller.abort(),120000);
+      let res;
       try{
-        const controller=new AbortController();
-        const timer=setTimeout(()=>controller.abort(),90000);
-        let res;
-        try{
-          res=await fetch(url,{cache:'no-store',mode:'cors',redirect:'follow',signal:controller.signal});
-        }finally{clearTimeout(timer)}
-        if(!res.ok) throw new Error(`HTTP ${res.status}`);
-        const buf=await res.arrayBuffer();
-        // Git LFSのポインタ文字列を誤ってモデルとして渡さない。
-        if(buf.byteLength<100000) {
-          const head=new TextDecoder().decode(new Uint8Array(buf.slice(0,120)));
-          if(head.includes('git-lfs.github.com/spec')) throw new Error('Git LFSポインタが返されました');
-          throw new Error(`モデルファイルが小さすぎます（${buf.byteLength} bytes）`);
-        }
-        return new Uint8Array(buf);
-      }catch(err){
-        lastErr=err;
-        console.warn('画像認証モデル取得失敗:',url,err);
+        res=await fetch(url,{cache:'force-cache',mode:'cors',redirect:'follow',signal:controller.signal});
+      }finally{clearTimeout(timer)}
+      if(!res.ok) throw new Error(`HTTP ${res.status}`);
+      const buf=await res.arrayBuffer();
+      if(buf.byteLength<100000){
+        const head=new TextDecoder().decode(new Uint8Array(buf.slice(0,120)));
+        if(head.includes('git-lfs.github.com/spec')) throw new Error('Git LFSポインタが返されました');
+        throw new Error(`モデルファイルが小さすぎます（${buf.byteLength} bytes）`);
       }
+      return new Uint8Array(buf);
+    }catch(err){
+      console.error('画像認証モデル取得失敗:',url,err);
+      throw new Error(`画像認証モデルを取得できませんでした：${err?.message||err||'unknown error'}`);
     }
-    throw new Error(`画像認証モデルを取得できませんでした。外部モデルURLへの接続に失敗しています：${lastErr?.message||lastErr||'unknown error'}`);
   }
 
   async function photoLoadSession(){
@@ -999,5 +991,5 @@
 
   // Initial setup
   updateRuleSummary();loadSettingsUI();syncPlayerModeUI();syncRuleEffects();updateSpecialLabel();syncManualConflicts();renderHand();renderWin();renderMelds();renderWaitHand();renderWaitResult();manualCalc();analyze();
-  if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js?v=20').catch(()=>{}));}
+  if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js?v=19').catch(()=>{}));}
 })();
