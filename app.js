@@ -57,21 +57,21 @@
     {name:'混一色', han:3, open:2, freq:6.27, note:'鳴くと2翻'},
     {name:'二盃口', han:3, open:'—', freq:0.048, note:'門前のみ'},
     {name:'清一色', han:6, open:5, freq:0.85, note:'鳴くと5翻'},
-    {name:'国士無双', han:13, open:'役満', freq:0.03442846, note:''},
-    {name:'国士無双十三面待ち', han:26, open:'役満', freq:0.00081045, note:''},
-    {name:'四暗刻', han:13, open:'役満', freq:0.04300192, note:''},
-    {name:'四暗刻単騎', han:26, open:'役満', freq:0.00511586, note:''},
-    {name:'大三元', han:13, open:'役満', freq:0.03127012, note:''},
-    {name:'小四喜', han:13, open:'役満', freq:0.00895590, note:''},
-    {name:'大四喜', han:26, open:'役満', freq:0.00039780, note:''},
-    {name:'字一色', han:13, open:'役満', freq:0.00394883, note:''},
-    {name:'緑一色', han:13, open:'役満', freq:0.00150801, note:''},
-    {name:'清老頭', han:13, open:'役満', freq:0.00109510, note:''},
-    {name:'九蓮宝燈', han:13, open:'役満', freq:0.00086702, note:''},
-    {name:'純正九蓮宝燈', han:26, open:'役満', freq:0.00005504, note:''},
-    {name:'四槓子', han:13, open:'役満', freq:0.0002, note:''},
-    {name:'天和', han:13, open:'役満', freq:0.00036836, note:''},
-    {name:'地和', han:13, open:'役満', freq:0.00096609, note:''}
+    {name:'国士無双', han:13, open:'門前のみ', freq:0.03442846, note:''},
+    {name:'国士無双十三面待ち', han:26, open:'門前のみ', freq:0.00081045, note:''},
+    {name:'四暗刻', han:13, open:'門前のみ', freq:0.04300192, note:''},
+    {name:'四暗刻単騎', han:26, open:'門前のみ', freq:0.00511586, note:''},
+    {name:'大三元', han:13, open:'鳴きOK', freq:0.03127012, note:''},
+    {name:'小四喜', han:13, open:'鳴きOK', freq:0.00895590, note:''},
+    {name:'大四喜', han:26, open:'鳴きOK', freq:0.00039780, note:''},
+    {name:'字一色', han:13, open:'鳴きOK', freq:0.00394883, note:''},
+    {name:'緑一色', han:13, open:'鳴きOK', freq:0.00150801, note:''},
+    {name:'清老頭', han:13, open:'鳴きOK', freq:0.00109510, note:''},
+    {name:'九蓮宝燈', han:13, open:'門前のみ', freq:0.00086702, note:''},
+    {name:'純正九蓮宝燈', han:26, open:'門前のみ', freq:0.00005504, note:''},
+    {name:'四槓子', han:13, open:'鳴きOK', freq:0.0002, note:''},
+    {name:'天和', han:13, open:'門前のみ', freq:0.00036836, note:''},
+    {name:'地和', han:13, open:'門前のみ', freq:0.00096609, note:''}
   ];
 
   const el = id => $(id);
@@ -292,16 +292,10 @@
   // RiichiCam本家のVercel公開モデルを第一候補にする。
   // GitHubのモデルURLは現在HTTP 404になるため、そこだけに依存しない。
   // GitHub PagesからVercelへ直接fetchできない環境向けにCORSプロキシも用意する。
-  const PHOTO_MODEL_ORIGIN='https://www.riichicam.com/models/tile-detector.onnx';
-  const PHOTO_MODEL_URLS=[
-    PHOTO_MODEL_ORIGIN,
-    'https://riichicam.com/models/tile-detector.onnx',
-    'https://corsproxy.io/?url='+encodeURIComponent(PHOTO_MODEL_ORIGIN),
-    'https://api.allorigins.win/raw?url='+encodeURIComponent(PHOTO_MODEL_ORIGIN),
-    'https://media.githubusercontent.com/media/MMitch42/RiichiCam/main/public/models/tile-detector.onnx',
-    'https://raw.githubusercontent.com/MMitch42/RiichiCam/refs/heads/main/public/models/tile-detector.onnx',
-    'https://cdn.jsdelivr.net/gh/MMitch42/RiichiCam@main/public/models/tile-detector.onnx'
-  ];
+  // モデルはGitHub Pages内に同梱して、外部URLやCORSに依存しない。
+  // /models/tile-detector.onnx はRiichiCam系の37クラスYOLOモデル。
+  const PHOTO_MODEL_ORIGIN='./models/tile-detector.onnx';
+  const PHOTO_MODEL_URLS=[PHOTO_MODEL_ORIGIN];
   const PHOTO_CLASS_NAMES=['1m','1p','1s','1z','2m','2p','2s','2z','3m','3p','3s','3z','4m','4p','4s','4z','5m','5mr','5p','5pr','5s','5sr','5z','6m','6p','6s','6z','7m','7p','7s','7z','8m','8p','8s','9m','9p','9s'];
   let photoSession=null;
   let photoSessionPromise=null;
@@ -976,7 +970,9 @@
       if(y.han<13 && typeof y.open==='number'){
         openV = y.open===y.han ? `鳴きOK（食い下がりなし）` : `喰い下がり${y.open}飜`;
       } else if(y.han>=13){
-        openV='役満';
+        openV = y.open==='門前のみ' ? '門前のみ'
+              : y.open==='鳴きOK' ? '鳴きOK'
+              : '役満';
       }
       const freq=y.freq==null?'—':(()=>{
         if(y.freq===0)return '0.0000%';
@@ -1003,5 +999,5 @@
 
   // Initial setup
   updateRuleSummary();loadSettingsUI();syncPlayerModeUI();syncRuleEffects();updateSpecialLabel();syncManualConflicts();renderHand();renderWin();renderMelds();renderWaitHand();renderWaitResult();manualCalc();analyze();
-  if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js?v=17').catch(()=>{}));}
+  if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js?v=20').catch(()=>{}));}
 })();
