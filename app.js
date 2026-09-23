@@ -289,9 +289,15 @@
   // 写真認証：YOLO/ONNXをブラウザ内で実行する。
   // 認識後は既存の「選択した手牌」にそのまま反映する。
   // ============================================================
-  // モデルはGitHub本体・Git LFS用media URL・jsDelivrの順で試す。
-  // GitHub側でモデルがLFS管理になっていても、media.githubusercontent.comなら実体を取得できる。
+  // RiichiCam本家のVercel公開モデルを第一候補にする。
+  // GitHubのモデルURLは現在HTTP 404になるため、そこだけに依存しない。
+  // GitHub PagesからVercelへ直接fetchできない環境向けにCORSプロキシも用意する。
+  const PHOTO_MODEL_ORIGIN='https://www.riichicam.com/models/tile-detector.onnx';
   const PHOTO_MODEL_URLS=[
+    PHOTO_MODEL_ORIGIN,
+    'https://riichicam.com/models/tile-detector.onnx',
+    'https://corsproxy.io/?url='+encodeURIComponent(PHOTO_MODEL_ORIGIN),
+    'https://api.allorigins.win/raw?url='+encodeURIComponent(PHOTO_MODEL_ORIGIN),
     'https://media.githubusercontent.com/media/MMitch42/RiichiCam/main/public/models/tile-detector.onnx',
     'https://raw.githubusercontent.com/MMitch42/RiichiCam/refs/heads/main/public/models/tile-detector.onnx',
     'https://cdn.jsdelivr.net/gh/MMitch42/RiichiCam@main/public/models/tile-detector.onnx'
@@ -304,7 +310,12 @@
     let lastErr=null;
     for(const url of PHOTO_MODEL_URLS){
       try{
-        const res=await fetch(url,{cache:'no-store',mode:'cors'});
+        const controller=new AbortController();
+        const timer=setTimeout(()=>controller.abort(),90000);
+        let res;
+        try{
+          res=await fetch(url,{cache:'no-store',mode:'cors',redirect:'follow',signal:controller.signal});
+        }finally{clearTimeout(timer)}
         if(!res.ok) throw new Error(`HTTP ${res.status}`);
         const buf=await res.arrayBuffer();
         // Git LFSのポインタ文字列を誤ってモデルとして渡さない。
@@ -319,7 +330,7 @@
         console.warn('画像認証モデル取得失敗:',url,err);
       }
     }
-    throw new Error(`画像認証モデルを取得できませんでした：${lastErr?.message||lastErr||'unknown error'}`);
+    throw new Error(`画像認証モデルを取得できませんでした。外部モデルURLへの接続に失敗しています：${lastErr?.message||lastErr||'unknown error'}`);
   }
 
   async function photoLoadSession(){
