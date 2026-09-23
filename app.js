@@ -12,7 +12,7 @@
   const DEFAULT_RULES = { players:4, openTanyao:true, kiriage:false, kazoe:true, doubleYakuman:true, doubleWind4:false, redDora:true, uraDora:true, kitaDora:true, tsumoLoss:true };
   const saved = (() => { try { return JSON.parse(localStorage.getItem('mahjongRules') || localStorage.getItem('mahjong4Rules') || 'null'); } catch { return null; }})();
   const rules = {...DEFAULT_RULES, ...(saved && (saved.players === 3 || saved.players === 4) ? saved : {})};
-  const playableTypes = () => rules.players===3 ? TYPES.filter(t=>!(suit(t)==='m' && num(t)>=2 && num(t)<=8)) : TYPES;
+  const playableTypes = () => rules.players===3 ? TYPES.filter(t=>!((suit(t)==='m' && num(t)>=2 && num(t)<=8) || t==='4z')) : TYPES;
   const isSanma = () => rules.players===3;
 
   let hand = [];
@@ -57,18 +57,21 @@
     {name:'混一色', han:3, open:2, freq:6.27, note:'鳴くと2翻'},
     {name:'二盃口', han:3, open:'—', freq:0.048, note:'門前のみ'},
     {name:'清一色', han:6, open:5, freq:0.85, note:'鳴くと5翻'},
-    {name:'国士無双', han:13, open:'役満', freq:null, note:'役満'},
-    {name:'四暗刻', han:13, open:'役満', freq:null, note:'役満'},
-    {name:'大三元', han:13, open:'役満', freq:null, note:'役満'},
-    {name:'小四喜', han:13, open:'役満', freq:null, note:'役満'},
-    {name:'大四喜', han:13, open:'役満', freq:null, note:'役満扱いは卓差あり'},
-    {name:'字一色', han:13, open:'役満', freq:null, note:'役満'},
-    {name:'緑一色', han:13, open:'役満', freq:null, note:'役満'},
-    {name:'清老頭', han:13, open:'役満', freq:null, note:'役満'},
-    {name:'九蓮宝燈', han:13, open:'役満', freq:null, note:'純正形はダブル設定に依存'},
-    {name:'四槓子', han:13, open:'役満', freq:null, note:'役満'},
-    {name:'天和', han:13, open:'役満', freq:null, note:'役満'},
-    {name:'地和', han:13, open:'役満', freq:null, note:'役満'}
+    {name:'国士無双', han:13, open:'役満', freq:0.03442846, note:''},
+    {name:'国士無双十三面待ち', han:26, open:'役満', freq:0.00081045, note:''},
+    {name:'四暗刻', han:13, open:'役満', freq:0.04300192, note:''},
+    {name:'四暗刻単騎', han:26, open:'役満', freq:0.00511586, note:''},
+    {name:'大三元', han:13, open:'役満', freq:0.03127012, note:''},
+    {name:'小四喜', han:13, open:'役満', freq:0.00895590, note:''},
+    {name:'大四喜', han:26, open:'役満', freq:0.00039780, note:''},
+    {name:'字一色', han:13, open:'役満', freq:0.00394883, note:''},
+    {name:'緑一色', han:13, open:'役満', freq:0.00150801, note:''},
+    {name:'清老頭', han:13, open:'役満', freq:0.00109510, note:''},
+    {name:'九蓮宝燈', han:13, open:'役満', freq:0.00086702, note:''},
+    {name:'純正九蓮宝燈', han:26, open:'役満', freq:0.00005504, note:''},
+    {name:'四槓子', han:13, open:'役満', freq:0.0002, note:''},
+    {name:'天和', han:13, open:'役満', freq:0.00036836, note:''},
+    {name:'地和', han:13, open:'役満', freq:0.00096609, note:''}
   ];
 
   const el = id => $(id);
@@ -154,8 +157,13 @@
     const bits=[rules.players===3?'三人麻雀':'四人麻雀']; if(rules.openTanyao)bits.push('喰いタン'); if(rules.kiriage)bits.push('切り上げ満貫'); if(rules.redDora)bits.push('赤ドラ'); if(rules.uraDora)bits.push('裏ドラ'); if(isSanma()&&rules.kitaDora)bits.push('北抜き'); if(isSanma()&&rules.tsumoLoss)bits.push('ツモ損');
     el('ruleSummary').textContent=bits.join(' ・ ');
   }
+  function syncSeatDealer(){
+    if(el('seat').value==='1z') el('dealer').value='true';
+    else el('dealer').value='false';
+  }
   function syncPlayerModeUI(){
     const sanma=isSanma();
+    syncSeatDealer();
     document.querySelectorAll('[data-player-mode]').forEach(b=>b.classList.toggle('active',(sanma?'3':'4')===b.dataset.playerMode));
     const seat=el('seat'), round=el('round');
     [...seat.options].forEach(o=>o.hidden=sanma&&o.value==='4z'); [...round.options].forEach(o=>o.hidden=sanma&&o.value==='4z');
@@ -164,6 +172,7 @@
     el('red5m').closest('label').classList.toggle('hidden',sanma);
     if(sanma){el('red5m').checked=false;red.delete('5m');}
     el('autoPhotoBtn').textContent='📷 写真を撮る';
+    if(el('kitaBtn')) el('kitaBtn').textContent=`🀄 北を抜く（北抜き）${kitaCount?` ×${kitaCount}`:''}`;
   }
   function loadSettingsUI(){ ['openTanyao','kiriage','kazoe','doubleYakuman','doubleWind4','redDora','uraDora','kitaDora','tsumoLoss'].forEach(k=>{const x=el(`set${k.charAt(0).toUpperCase()+k.slice(1)}`);if(x)x.checked=!!rules[k]}); syncPlayerModeUI(); }
   el('settingsBtn').onclick=()=>{loadSettingsUI();openModal('settingsModal')};
@@ -230,11 +239,11 @@
     if(isRon) return {ron:round100(raw)};
     if(isSanma()){
       if(parent){
-        const each=rules.tsumoLoss?round100(raw/3):round100(raw/2);
+        const each=rules.tsumoLoss?round100(raw/3):round100(raw/3);
         return {tsumo:each};
       }
       if(rules.tsumoLoss) return {tsumoDealer:round100(raw/2),tsumoOther:round100(raw/4)};
-      const each=round100(raw/2); return {tsumoDealer:each,tsumoOther:each};
+      return {tsumoDealer:round100(raw/3),tsumoOther:round100(raw*2/3)};
     }
     if(parent) return {tsumo:round100(raw/3)};
     return {tsumoLow:round100(raw/4),tsumoHigh:round100(raw/2)};
@@ -249,9 +258,9 @@
   }
   function excelAoten(han,fu,parent,isRon){
     const raw=(parent?48:32)*fu*Math.pow(2,han-1);
-    if(isRon) return `${formatScorePart(round100(raw))}点`;
-    if(parent) return `${formatScorePart(round100(raw/3))}点オール`;
-    return `${formatScorePart(round100(raw/4))}-${formatScorePart(round100(raw/2))}点`;
+    if(isRon) return `${formatScorePart(raw)}点`;
+    if(parent) return `${formatScorePart(raw/3)}点オール`;
+    return `${formatScorePart(raw/4)}-${formatScorePart(raw/2)}点`;
   }
 
   // Hand picker
@@ -263,7 +272,7 @@
       hand.push(t); renderHand(); renderWin(); analyze();
     }); openModal('tileModal');
   };
-  el('clearHand').onclick=()=>{hand=[];win=null;red.clear();kitaCount=0;['m','p','s'].forEach(s=>el(`red5${s}`).checked=false);renderHand();renderWin();analyze()};
+  el('clearHand').onclick=()=>{hand=[];win=null;red.clear();kitaCount=0;['m','p','s'].forEach(s=>el(`red5${s}`).checked=false);el('kitaBtn').textContent='🀄 北を抜く（北抜き）';renderHand();renderWin();analyze()};
 
   // ============================================================
   // 写真認証：YOLO/ONNXをブラウザ内で実行する。
@@ -359,12 +368,55 @@
     playableTypes().forEach(t=>{if((c[t]||0)>=4)return;const a=arr.concat(t);let ok=decompositions(a,4).length>0;const cc=counts(a);if(!ok)ok=Object.keys(cc).length===7&&Object.values(cc).every(n=>n===2);if(!ok){const req=isSanma()?['1m','9m','1p','9p','1s','9s','1z','2z','3z','4z','5z','6z','7z']:['1m','9m','1p','9p','1s','9s','1z','2z','3z','4z','5z','6z','7z'];ok=req.every(x=>cc[x]>=1)&&req.some(x=>cc[x]>=2)}if(ok)out.push(t)});
     return out;
   }
+  function evaluateWaitTile(t){
+    const oldHand=hand, oldWin=win, oldMelds=melds;
+    hand=waitHand.concat(t); win=t; melds=[];
+    const oldChecks={};
+    ['riichi','doubleRiichi','ippatsu','rinshan','chankan','haitei','houtei','tenhou','chiihou'].forEach(id=>{oldChecks[id]=el(id).checked;el(id).checked=false});
+    let best=null;
+    if(isKokushi()||isChiitoi()){
+      const d={groups:[],pair:null}; const ys=yakuList(d); const ym=yakumanMultiplier(ys);
+      best={ys,ym,h:0,fu:ym?25:fuCalc(d)};
+    }else{
+      const ds=decompositions(hand,4);
+      ds.forEach(d=>{
+        const ys=yakuList(d), ym=yakumanMultiplier(ys);
+        const h=ys.filter(y=>y.type!=='yakuman').reduce((a,y)=>a+y.han,0)+doraCount();
+        if(!ys.length)return;
+        const fu=fuCalc(d);
+        if(!best||ym>best.ym||(ym===best.ym&&(h>best.h||(h===best.h&&fu>best.fu))))best={ys,ym,h,fu};
+      });
+    }
+    ['riichi','doubleRiichi','ippatsu','rinshan','chankan','haitei','houtei','tenhou','chiihou'].forEach(id=>el(id).checked=oldChecks[id]);
+    hand=oldHand; win=oldWin; melds=oldMelds;
+    if(!best)return null;
+    const dealer=el('dealer').value==='true', ron=el('winMethod').value==='ron';
+    const doraH=0;
+    const text=best.ym>=1?scoreYakuman(best.ym,ron,dealer):(limitLabel(best.h)?`${limitLabel(best.h)}：${scoreResult(best.h,best.fu,dealer,ron).text}`:scoreResult(best.h,best.fu,dealer,ron).text);
+    const yaku=best.ys.filter(y=>y.type==='yakuman').map(y=>y.name);
+    const normal=best.ys.filter(y=>y.type!=='yakuman').map(y=>y.name);
+    return {tile:t,ys:best.ym>=1?yaku:normal,ym:best.ym,h:best.h,fu:best.fu,score:text};
+  }
   function renderWaitResult(){
     const st=el('waitStatus'),box=el('waitResult');box.innerHTML='';el('waitCount').textContent='0種';
     if(waitHand.length!==13){st.className='status';st.textContent=`現在${waitHand.length}枚。13枚にしてね`;return}
     const waits=calcWaits(waitHand);
     if(!waits.length){st.className='status err';st.textContent='テンパイしていません';return}
-    st.className='status ok';st.textContent='テンパイしています';el('waitCount').textContent=`${waits.length}種`;waits.forEach(t=>{const b=document.createElement('div');b.className='wait-tile';b.innerHTML=tileImg(t);box.appendChild(b)});
+    const evaluated=waits.map(evaluateWaitTile).filter(Boolean);
+    st.className='status ok';st.textContent='テンパイしています';el('waitCount').textContent=`${waits.length}種`;
+    const groups=new Map();
+    evaluated.forEach(r=>{
+      const key=`${r.ys.join('|')}__${r.score}`;
+      if(!groups.has(key))groups.set(key,{...r,tiles:[]});
+      groups.get(key).tiles.push(r.tile);
+    });
+    groups.forEach(g=>{
+      const card=document.createElement('div');card.className='wait-score-card';
+      const tiles=g.tiles.map(t=>tileImg(t)).join('');
+      const yaku=g.ys.length?g.ys.join('・'):'役なし';
+      card.innerHTML=`<div class="wait-score-tiles">${tiles}</div><div class="wait-score-yaku"><span>役</span><b>${yaku}</b></div><div class="wait-score-points"><span>点数</span><strong>${g.score}</strong></div>`;
+      box.appendChild(card);
+    });
   }
 
   ['m','p','s'].forEach(s=>el(`red5${s}`).addEventListener('change',()=>{const t=`5${s}`;if(!rules.redDora){el(`red5${s}`).checked=false;return} if(el(`red5${s}`).checked)red.add(t);else red.delete(t);analyze()}));
@@ -379,9 +431,9 @@
   el('openMeldPicker').onclick=()=>openModal('meldModal');
   el('kitaBtn').onclick=()=>{
     if(!isSanma())return;
-    const i=hand.indexOf('4z');
-    if(i<0){alert('手牌に北がありません');return;}
-    hand.splice(i,1); kitaCount++; win=null; renderHand();renderWin();analyze();
+    kitaCount++;
+    el('kitaBtn').textContent=`🀄 北を抜く（北抜き）${kitaCount?` ×${kitaCount}`:''}`;
+    analyze();
   };
   document.querySelectorAll('[data-meld-type]').forEach(b=>b.onclick=()=>{closeModal('meldModal'); if(b.dataset.meldType==='pon')startPon(); if(b.dataset.meldType==='chi')startChi(); if(b.dataset.meldType==='kan')openModal('kanModal');});
   document.querySelectorAll('[data-kan-type]').forEach(b=>b.onclick=()=>{pending.kanType=b.dataset.kanType;closeModal('kanModal');startKan()});
@@ -465,7 +517,13 @@
   function renderMiniPicker(target, set){target.innerHTML='';playableTypes().forEach(t=>{const b=document.createElement('button');b.innerHTML=tileImg(t);b.classList.toggle('selected',set.has(t));b.onclick=()=>{if(set.has(t))set.delete(t);else {if(set.size>=5)return;set.add(t)}renderMiniPicker(target,set);analyze()};target.appendChild(b)})}
   renderMiniPicker(el('doraPicker'),doraIndicators); renderMiniPicker(el('uraPicker'),uraIndicators);
 
-  ['seat','round','dealer','winMethod','riichi','doubleRiichi','ippatsu','rinshan','chankan','haitei','houtei','tenhou','chiihou'].forEach(id=>el(id).addEventListener('change',analyze));
+  el('seat').addEventListener('change',()=>{syncSeatDealer();analyze();});
+  el('dealer').addEventListener('change',()=>{
+    if(el('dealer').value==='true') el('seat').value='1z';
+    else if(el('seat').value==='1z') el('seat').value='2z';
+    analyze();
+  });
+  ['round','winMethod','riichi','doubleRiichi','ippatsu','rinshan','chankan','haitei','houtei','tenhou','chiihou'].forEach(id=>el(id).addEventListener('change',analyze));
   const specialIds=['riichi','doubleRiichi','ippatsu','rinshan','chankan','haitei','houtei','tenhou','chiihou'];
   function updateSpecialLabel(){}
 
@@ -695,7 +753,7 @@
   function formatNum(n){return Number(n).toLocaleString('ja-JP')}
   function aoten(h,fu){return Math.ceil(fu*Math.pow(2,h+2)/100)*100}
   function yakumanMultiplier(ys){return ys.filter(y=>y.type==='yakuman').reduce((a,y)=>a+y.han/13,0)}
-  function scoreYakuman(mult,isRon,dealer){const b=8000*mult;if(isRon)return `${formatNum(b*(dealer?6:4))}点`;if(isSanma()){if(dealer){const each=rules.tsumoLoss?b*2/3:b;return `${formatNum(round100(each))}点オール`;}return rules.tsumoLoss?`${formatNum(round100(b))}-${formatNum(round100(b/2))}点`:`${formatNum(round100(b))}点オール`;}return dealer?`${formatNum(b*2)}点オール`:`${formatNum(b)}-${formatNum(b*2)}点`;}
+  function scoreYakuman(mult,isRon,dealer){const b=8000*mult;if(isRon)return `${formatNum(b*(dealer?6:4))}点`;if(isSanma()){if(dealer){const each=rules.tsumoLoss?b*2/3:b/3;return `${formatNum(round100(each))}点オール`;}return rules.tsumoLoss?`${formatNum(round100(b))}-${formatNum(round100(b/2))}点`:`${formatNum(round100(b/3))}-${formatNum(round100(b*2/3))}点`;}return dealer?`${formatNum(b*2)}点オール`:`${formatNum(b)}-${formatNum(b*2)}点`;}
 
   function renderShape(d){
     const box=el('selectedShape'); box.innerHTML=''; if(!d)return;
@@ -743,7 +801,7 @@
     st.textContent=yakuman?`${ym===2?'ダブル':ym>2?ym+'倍':''}役満判定`:'判定完了';
     renderShape(d);
     el('yakuResult').innerHTML=displayYs.map(y=>`<div class="yaku"><span>${y.name}</span><b>${y.type==='yakuman'?(y.han===26?'ダブル役満':'役満'):`${y.han}飜`}</b></div>`).join('') + (doraH&&!yakuman?`<div class="yaku"><span>ドラ（赤・裏を含む）</span><b>${doraH}飜</b></div>`:'');
-    el('totalHan').textContent=yakuman?`${ym}倍相当の役満`: `${h}飜`;
+    el('totalHan').textContent=yakuman?`${ym===1?'役満':ym+'倍役満'}`: `${h}飜`;
     el('totalFu').textContent=yakuman?'—':`${fu}符`;
     const dealer=el('dealer').value==='true', ron=el('winMethod').value==='ron';
     el('autoScore').textContent=yakuman?scoreYakuman(ym,ron,dealer):(limitLabel(h)?`${limitLabel(h)}：${scoreResult(h,fu,dealer,ron).text}`:scoreResult(h,fu,dealer,ron).text);
@@ -793,15 +851,15 @@
     const mode=el('yakuSort').value;
     const arr=clone(yakuCatalog).sort((a,b)=>mode==='han'?(a.han-b.han)||((a.freq??Infinity)-(b.freq??Infinity)):mode==='frequency'?((b.freq??-1)-(a.freq??-1))||a.han-b.han:a.name.localeCompare(b.name,'ja'));
     el('yakuTableBody').innerHTML=arr.map(y=>{
-      const closedV=y.han>=13?'役満':`${y.han}飜`;
+      const closedV=y.han>=26?'2倍役満':y.han>=13?'役満':`${y.han}飜`;
       let openV='門前のみ';
       if(y.han<13 && typeof y.open==='number'){
-        openV = y.open===y.han ? `${y.han}飜 鳴きOK（食い下がりなし）` : `${y.han}飜 喰い下がり${y.open}飜`;
+        openV = y.open===y.han ? `鳴きOK（食い下がりなし）` : `喰い下がり${y.open}飜`;
       } else if(y.han>=13){
         openV='役満';
       }
       const freq=y.freq==null?'—':`${y.freq.toFixed(y.freq<0.1?3:2)}%`;
-      return `<tr><td><strong>${y.name}</strong><br><small>${y.note||''}</small></td><td>${closedV}</td><td>${openV}</td><td>${freq}</td></tr>`;
+      return `<tr><td><strong>${y.name}</strong></td><td>${closedV}</td><td>${openV}</td><td>${freq}</td></tr>`;
     }).join('');
   }
   el('yakuSort').onchange=renderYakuTable;
